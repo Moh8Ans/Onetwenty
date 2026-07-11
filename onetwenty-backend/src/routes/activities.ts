@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { db } from '../db/index.js';
-import { activities, categories } from '../db/schema.js';
+import { activities, categories, sharedCapLedger } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
+import { matchCategoryCandidates } from '../services/matchCategory.js';
+import { extractCertificateFields } from '../services/extractCertificate.js';
+import { computeRawPoints, applyCapsAndLedger } from '../services/scoringEngine.js';
+import { SHARED_CAP_CEILINGS } from '../config/sharedCapCeilings.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -11,7 +15,7 @@ function getUserId(req: any): string {
   return req.userId;
 }
 
-// CREATE — add a new activity
+// CREATE — add a new activity (legacy manual-entry path, kept for now)
 router.post('/', async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -107,6 +111,145 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete activity' });
+  }
+});
+
+// STEP 1 — extract + propose candidates. No DB write yet.
+router.post('/extract', async (req, res) => {
+  try {
+    const { fileUrl, mimeType } = req.body;
+    if (!fileUrl) return res.status(400).json({ error: 'fileUrl is required' });
+
+    const extracted = await extractCertificateFields(fileUrl, mimeType);
+
+    if (extracted.extractionFailed) {
+      return res.json({ extracted, candidates: [] }); // frontend shows "couldn't read this — fill in manually"
+    }
+
+    const candidates = await matchCategoryCandidates(extracted);
+    res.json({ extracted, candidates });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Extraction failed' });
+  }
+});
+
+// STEP 2 — student-confirmed submission. This is what actually scores and writes.
+router.post('/confirm', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { categoryId, title, eventDate, level, achievementStatus, tierKey, hours, evidenceFileUrl, extractionRaw } = req.body;
+
+    if (!categoryId || !title) {
+      return res.status(400).json({ error: 'categoryId and title are required' });
+    }
+
+    const [category] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+
+    // per_unit_capped needs to know how much of THIS category's own cap is already used
+    // (separate from shared_cap_ledger, which tracks cross-category group ceilings)
+    let priorInstancesTotal = 0;
+    if (category.scoringType === 'per_unit_capped') {
+      const priorRows = await db.select().from(activities)
+        .where(and(eq(activities.userId, userId), eq(activities.categoryId, categoryId)));
+      priorInstancesTotal = priorRows
+        .filter(a => a.status !== 'sfa_rejected')
+        .reduce((sum, a) => sum + (a.computedPoints ?? 0), 0);
+    }
+
+    const rawPoints = computeRawPoints(category, { level, achievementStatus, tierKey, hours, priorInstancesTotal });
+
+    let ledgerRow;
+    let currentLedgerTotal = 0;
+    if (category.sharedCapGroup) {
+      [ledgerRow] = await db.select().from(sharedCapLedger)
+        .where(and(eq(sharedCapLedger.userId, userId), eq(sharedCapLedger.sharedCapGroup, category.sharedCapGroup)));
+      currentLedgerTotal = ledgerRow?.totalAwarded ?? 0;
+    }
+
+    const { awarded, ledgerAfter } = applyCapsAndLedger(category, rawPoints, currentLedgerTotal);
+
+    const [newActivity] = await db.insert(activities).values({
+      userId, categoryId, title,
+      pointsClaimed: rawPoints,
+      computedPoints: awarded,
+      level, achievementStatus,
+      status: 'pending_review', // always pending — SFA sign-off is mandatory, no auto-approve path
+      eventDate: eventDate ? new Date(eventDate) : null,
+      evidenceFileUrl, extractionRaw,
+    }).returning();
+
+    if (category.sharedCapGroup) {
+      if (ledgerRow) {
+        await db.update(sharedCapLedger).set({ totalAwarded: ledgerAfter }).where(eq(sharedCapLedger.id, ledgerRow.id));
+      } else {
+        await db.insert(sharedCapLedger).values({ userId, sharedCapGroup: category.sharedCapGroup, totalAwarded: ledgerAfter });
+      }
+    }
+
+    res.status(201).json(newActivity);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to score and submit activity' });
+  }
+});
+
+// added to activities.ts, alongside /extract and /confirm
+router.post('/preview-score', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { categoryId, level, achievementStatus, tierKey, hours } = req.body;
+
+    const [category] = await db.select().from(categories).where(eq(categories.id, categoryId));
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+
+    let priorInstancesTotal = 0;
+    if (category.scoringType === 'per_unit_capped') {
+      const priorRows = await db.select().from(activities)
+        .where(and(eq(activities.userId, userId), eq(activities.categoryId, categoryId)));
+      priorInstancesTotal = priorRows
+        .filter(a => a.status !== 'sfa_rejected')
+        .reduce((sum, a) => sum + (a.computedPoints ?? 0), 0);
+    }
+
+    const rawPoints = computeRawPoints(category, { level, achievementStatus, tierKey, hours, priorInstancesTotal });
+
+    let currentLedgerTotal = 0;
+    if (category.sharedCapGroup) {
+      const [ledgerRow] = await db.select().from(sharedCapLedger)
+        .where(and(eq(sharedCapLedger.userId, userId), eq(sharedCapLedger.sharedCapGroup, category.sharedCapGroup)));
+      currentLedgerTotal = ledgerRow?.totalAwarded ?? 0;
+    }
+
+    const { awarded, cappedFromRaw } = applyCapsAndLedger(category, rawPoints, currentLedgerTotal);
+    const groupCeiling = category.sharedCapGroup ? SHARED_CAP_CEILINGS[category.sharedCapGroup] : null;
+
+    res.json({ rawPoints, awarded, cappedFromRaw, groupCeiling, groupUsedBefore: currentLedgerTotal });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Preview failed' });
+  }
+});
+
+// route additions to activities.ts
+import multer from 'multer';
+import { uploadCertificate, getSignedUrl } from '../services/supabaseStorage.js';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+
+router.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+
+    const path = await uploadCertificate(userId, req.file.buffer, req.file.originalname, req.file.mimetype);
+    const signedUrl = await getSignedUrl(path);
+
+    res.json({ path, signedUrl, mimeType: req.file.mimetype });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
