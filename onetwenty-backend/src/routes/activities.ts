@@ -7,6 +7,7 @@ import { matchCategoryCandidates } from '../services/matchCategory.js';
 import { extractCertificateFields } from '../services/extractCertificate.js';
 import { computeRawPoints, applyCapsAndLedger } from '../services/scoringEngine.js';
 import { SHARED_CAP_CEILINGS } from '../config/sharedCapCeilings.js';
+import { validateSpecialConditions } from '../services/validateSpecialConditions.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -138,7 +139,7 @@ router.post('/extract', async (req, res) => {
 router.post('/confirm', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const { categoryId, title, eventDate, level, achievementStatus, tierKey, hours, evidenceFileUrl, extractionRaw } = req.body;
+    const { categoryId, title, issuingOrg, eventDate, startDate, endDate, level, achievementStatus, tierKey, hours, evidenceFileUrl, extractionRaw, matchConfidence } = req.body;
 
     if (!categoryId || !title) {
       return res.status(400).json({ error: 'categoryId and title are required' });
@@ -146,6 +147,13 @@ router.post('/confirm', async (req, res) => {
 
     const [category] = await db.select().from(categories).where(eq(categories.id, categoryId));
     if (!category) return res.status(404).json({ error: 'Category not found' });
+
+    // eligibility check — must happen before scoring, since a failed condition
+    // means this submission shouldn't be written or scored at all
+    const validation = validateSpecialConditions(category, { title, issuingOrg, startDate, endDate, matchConfidence });
+    if (validation.status === 'failed') {
+      return res.status(422).json({ error: 'Eligibility check failed', reason: validation.reason });
+    }
 
     // per_unit_capped needs to know how much of THIS category's own cap is already used
     // (separate from shared_cap_ledger, which tracks cross-category group ceilings)
@@ -175,6 +183,10 @@ router.post('/confirm', async (req, res) => {
       pointsClaimed: rawPoints,
       computedPoints: awarded,
       level, achievementStatus,
+      startDate: startDate ? new Date(startDate) : null,
+      endDate: endDate ? new Date(endDate) : null,
+      validationStatus: validation.status,
+      validationNotes: validation.reason,
       status: 'pending_review', // always pending — SFA sign-off is mandatory, no auto-approve path
       eventDate: eventDate ? new Date(eventDate) : null,
       evidenceFileUrl, extractionRaw,
@@ -194,7 +206,6 @@ router.post('/confirm', async (req, res) => {
     res.status(500).json({ error: 'Failed to score and submit activity' });
   }
 });
-
 // added to activities.ts, alongside /extract and /confirm
 router.post('/preview-score', async (req, res) => {
   try {

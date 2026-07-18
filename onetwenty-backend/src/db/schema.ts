@@ -30,6 +30,10 @@ export const activities = pgTable('activities', {
   extractionRaw: jsonb('extraction_raw'),
   duplicateOfId: integer('duplicate_of_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  startDate: timestamp('start_date'),
+  endDate: timestamp('end_date'),
+  validationStatus: varchar('validation_status', { length: 20 }).notNull().default('passed'), // passed | needs_manual_check
+  validationNotes: text('validation_notes'),
 });
 
 export const sharedCapLedger = pgTable('shared_cap_ledger', {

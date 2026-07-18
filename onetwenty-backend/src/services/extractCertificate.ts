@@ -1,8 +1,12 @@
 // src/services/extractCertificate.ts
 import { PDFParse } from 'pdf-parse';
 
+// extractCertificate.ts — replace SYSTEM_PROMPT
 const SYSTEM_PROMPT =
-  'Extract ONLY these fields from the certificate as strict JSON: title, issuingOrg, date (YYYY-MM-DD), ' +
+  'Extract ONLY these fields from the certificate as strict JSON: title, issuingOrg, ' +
+  'date (YYYY-MM-DD, the primary single event date, or null), ' +
+  'startDate (YYYY-MM-DD, only if this document describes a duration such as an internship, else null), ' +
+  'endDate (YYYY-MM-DD, the end of that duration if applicable, else null), ' +
   'levelHint (college|zonal|state|national|international|unknown), statusHint (participation|winner|unknown). No commentary.';
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
