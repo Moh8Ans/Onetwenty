@@ -72,6 +72,7 @@ export default function ConfirmScreen() {
         hours: scoringValues.hours ? Number(scoringValues.hours) : undefined,
         evidenceFileUrl: fileUrl,
         extractionRaw: extracted,
+        matchConfidence: candidates[selectedCategoryIdx]?.confidence,
       }),
     });
     setSubmitting(false);

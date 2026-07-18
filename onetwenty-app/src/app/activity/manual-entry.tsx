@@ -56,6 +56,7 @@ export default function ManualEntryScreen() {
         level: scoringValues.level, tierKey: scoringValues.tierKey,
         hours: scoringValues.hours ? Number(scoringValues.hours) : undefined,
         evidenceFileUrl: fileUrl,
+        matchConfidence: null, // browsed manually — no algorithmic corroboration to report
       }),
     });
     setSubmitting(false);
