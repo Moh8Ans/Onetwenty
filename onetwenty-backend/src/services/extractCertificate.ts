@@ -3,13 +3,30 @@ import { PDFParse } from 'pdf-parse';
 
 // extractCertificate.ts — replace SYSTEM_PROMPT
 const SYSTEM_PROMPT =
-  'Extract ONLY these fields from the certificate as strict JSON: title, issuingOrg, ' +
-  'date (YYYY-MM-DD, the primary single event date, or null), ' +
-  'startDate (YYYY-MM-DD, only if this document describes a duration such as an internship, else null), ' +
-  'endDate (YYYY-MM-DD, the end of that duration if applicable, else null), ' +
-  'levelHint (college|zonal|state|national|international|unknown), statusHint (participation|winner|unknown). No commentary.';
-
+  'You are looking at an image or document a student submitted as proof of an extracurricular activity. ' +
+  'First determine isCertificate: true if this is plausibly a certificate, award letter, internship completion ' +
+  'document, ID card, scorecard, or similar official proof-of-activity document. Set it false for anything else ' +
+  '(screenshots of apps/games, unrelated photos, random text, memes, etc.). ' +
+  'Then, only if isCertificate is true, extract: title, issuingOrg, date (YYYY-MM-DD), ' +
+  'startDate (YYYY-MM-DD, only if a duration is described, else null), endDate (YYYY-MM-DD, else null), ' +
+  'levelHint (college|zonal|state|national|international|unknown), statusHint (participation|winner|unknown). ' +
+  'If isCertificate is false, set all other fields to null. Return strict JSON only, no commentary.';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+
+function isUsableExtraction(result: any): boolean {
+  if (result.isCertificate === false) return false;
+  const hasAnyRealField = result.title || result.issuingOrg || result.date;
+  return Boolean(hasAnyRealField);
+}
+
+function notACertificateResult(): any {
+  return {
+    title: null, issuingOrg: null, date: null, startDate: null, endDate: null,
+    levelHint: 'unknown', statusHint: 'unknown',
+    extractionFailed: true,
+    reason: "This doesn't appear to be a certificate or proof-of-activity document. Please double-check the file, or continue manually if this is correct.",
+  };
+}
 
 async function callGemini(userParts: any[]) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -74,15 +91,17 @@ export async function extractCertificateFields(fileUrl: string, mimeTypeHint?: s
     const text = await extractPdfText(fileUrl);
     if (!hasUsableTextLayer(text)) {
       return {
-        title: null, issuingOrg: null, date: null,
+        title: null, issuingOrg: null, date: null, startDate: null, endDate: null,
         levelHint: 'unknown', statusHint: 'unknown',
         extractionFailed: true,
         reason: 'PDF has no extractable text layer — likely a scanned document requiring manual entry',
       };
     }
-    return extractFromText(text);
+    const result = await extractFromText(text);
+    return isUsableExtraction(result) ? result : notACertificateResult();
   }
 
   const imageMime = mimeTypeHint?.startsWith('image/') ? mimeTypeHint : 'image/jpeg';
-  return extractFromImage(fileUrl, imageMime);
+  const result = await extractFromImage(fileUrl, imageMime);
+  return isUsableExtraction(result) ? result : notACertificateResult();
 }

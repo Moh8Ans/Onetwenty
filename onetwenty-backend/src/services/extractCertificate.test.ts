@@ -99,3 +99,35 @@ describe('extractCertificateFields', () => {
     expect(PDFParse).not.toHaveBeenCalled();
   });
 });
+
+// added to extractCertificate.test.ts
+describe('non-certificate detection', () => {
+  it('flags extractionFailed when Gemini explicitly says isCertificate: false', async () => {
+    mockFetch.mockResolvedValueOnce({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) } as any);
+    mockFetch.mockResolvedValueOnce(geminiResponse({ isCertificate: false, title: null, issuingOrg: null, date: null }));
+
+    const result = await extractCertificateFields('https://x.com/chess.jpg', 'image/jpeg');
+
+    expect(result.extractionFailed).toBe(true);
+    expect(result.reason).toContain("doesn't appear to be a certificate");
+  });
+
+  it('flags extractionFailed when all extracted fields come back empty, even without an explicit isCertificate flag', async () => {
+    mockFetch.mockResolvedValueOnce({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) } as any);
+    mockFetch.mockResolvedValueOnce(geminiResponse({ title: null, issuingOrg: null, date: null }));
+
+    const result = await extractCertificateFields('https://x.com/blank.jpg', 'image/jpeg');
+
+    expect(result.extractionFailed).toBe(true);
+  });
+
+  it('does not flag a genuine extraction with real fields', async () => {
+    mockFetch.mockResolvedValueOnce({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) } as any);
+    mockFetch.mockResolvedValueOnce(geminiResponse({ isCertificate: true, title: 'Tech Fest', issuingOrg: 'IEEE', date: '2026-05-18' }));
+
+    const result = await extractCertificateFields('https://x.com/cert.jpg', 'image/jpeg');
+
+    expect(result.extractionFailed).toBeUndefined();
+    expect(result.title).toBe('Tech Fest');
+  });
+});
