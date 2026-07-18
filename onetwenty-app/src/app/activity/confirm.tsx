@@ -142,7 +142,11 @@ export default function ConfirmScreen() {
         </View>
       )}
 
-      <Pressable style={styles.submitButton} onPress={handleSubmit} disabled={submitting}>
+      <Pressable
+        style={[styles.submitButton, !title.trim() && { opacity: 0.4 }]}
+        onPress={handleSubmit}
+        disabled={submitting || !title.trim()}
+        >
         <Text style={styles.submitText}>{submitting ? 'Submitting…' : 'Submit for review'}</Text>
       </Pressable>
       <Text style={styles.helperText}>An SFA reviews every submission before it counts toward your total.</Text>

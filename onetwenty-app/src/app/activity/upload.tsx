@@ -57,7 +57,7 @@ export default function UploadScreen() {
 
 
     if (extracted.extractionFailed) {
-      router.push({ pathname: '/activity/manual-entry', params: { fileUrl: path } });
+      router.push({ pathname: '/activity/manual-entry', params: { fileUrl: path, extractionReason: extracted.reason } });
       return;
     }
 

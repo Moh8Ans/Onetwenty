@@ -10,8 +10,8 @@ const API_BASE = 'https://onetwenty-backend.onrender.com';
 const GROUP_NAMES: Record<number, string> = { 1: 'Group I', 2: 'Group II', 3: 'Group III' };
 
 export default function ManualEntryScreen() {
-  const { fileUrl, prefillTitle, prefillOrg, prefillDate } = useLocalSearchParams<{
-  fileUrl: string; prefillTitle?: string; prefillOrg?: string; prefillDate?: string;
+  const { fileUrl, prefillTitle, prefillOrg, prefillDate, extractionReason } = useLocalSearchParams<{
+  fileUrl: string; prefillTitle?: string; prefillOrg?: string; prefillDate?: string; extractionReason?: string;
   }>();
   const router = useRouter();
   const { getToken } = useAuth();
@@ -67,7 +67,7 @@ export default function ManualEntryScreen() {
     return (
       <View style={styles.screen}>
         <Text style={styles.headerNote}>
-          We couldn't read this certificate automatically — likely a scanned document. Pick the matching category to continue.
+        {extractionReason ?? "We couldn't read this certificate automatically — likely a scanned document. Pick the matching category to continue."}
         </Text>
         <TextInput
           style={styles.searchInput}
@@ -132,7 +132,11 @@ export default function ManualEntryScreen() {
         </View>
       )}
 
-      <Pressable style={styles.submitButton} onPress={handleSubmit} disabled={submitting || !title}>
+      <Pressable
+      style={[styles.submitButton, !title.trim() && { opacity: 0.4 }]}
+      onPress={handleSubmit}
+      disabled={submitting || !title.trim()}
+      >
         <Text style={styles.submitText}>{submitting ? 'Submitting…' : 'Submit for review'}</Text>
       </Pressable>
       <Text style={styles.helperText}>An SFA reviews every submission before it counts toward your total.</Text>
