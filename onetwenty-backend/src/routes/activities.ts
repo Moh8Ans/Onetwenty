@@ -4,7 +4,7 @@ import { activities, categories, sharedCapLedger } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { matchCategoryCandidates } from '../services/matchCategory.js';
-import { extractCertificateFields } from '../services/extractCertificate.js';
+import { classifyCertificate } from '../services/extractCertificate.js';
 import { computeRawPoints, applyCapsAndLedger } from '../services/scoringEngine.js';
 import { SHARED_CAP_CEILINGS } from '../config/sharedCapCeilings.js';
 import { validateSpecialConditions } from '../services/validateSpecialConditions.js';
@@ -121,14 +121,25 @@ router.post('/extract', async (req, res) => {
     const { fileUrl, mimeType } = req.body;
     if (!fileUrl) return res.status(400).json({ error: 'fileUrl is required' });
 
-    const extracted = await extractCertificateFields(fileUrl, mimeType);
+    const allCategories = await db.select().from(categories);
+    const result = await classifyCertificate(fileUrl, mimeType, allCategories);
 
-    if (extracted.extractionFailed) {
-      return res.json({ extracted, candidates: [] }); // frontend shows "couldn't read this — fill in manually"
+    if (result.extractionFailed) {
+      return res.json({ extracted: result, candidates: [] });
     }
 
-    const candidates = await matchCategoryCandidates(extracted);
-    res.json({ extracted, candidates });
+    const mappedCandidates = result.candidates
+      .map((c: { srNo: string; confidence: number; reasoning: string }) => {
+        const category = allCategories.find((cat: any) => cat.srNo === c.srNo);
+        return category ? { category, confidence: c.confidence, reasoning: c.reasoning } : null;
+      })
+      .filter((c: any): c is NonNullable<typeof c> => c !== null);
+
+    const candidates = mappedCandidates.length > 0
+    ? mappedCandidates
+    : await matchCategoryCandidates({ title: result.title ?? '', issuingOrg: result.issuingOrg ?? '' });
+
+    res.json({ extracted: result, candidates });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Extraction failed' });
