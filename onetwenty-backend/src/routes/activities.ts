@@ -8,6 +8,7 @@ import { classifyCertificate } from '../services/extractCertificate.js';
 import { computeRawPoints, applyCapsAndLedger } from '../services/scoringEngine.js';
 import { SHARED_CAP_CEILINGS } from '../config/sharedCapCeilings.js';
 import { validateSpecialConditions } from '../services/validateSpecialConditions.js';
+import { generateSuggestions } from '../services/suggestionEngine.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -272,6 +273,22 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
+router.get('/suggestions', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const allCategories = await db.select().from(categories);
+    const userActivities = await db.select().from(activities).where(eq(activities.userId, userId));
+    const ledgerRows = await db.select().from(sharedCapLedger).where(eq(sharedCapLedger.userId, userId));
+
+    const suggestions = generateSuggestions(allCategories, userActivities, ledgerRows, SHARED_CAP_CEILINGS);
+
+    res.json({ suggestions: suggestions.slice(0, 5) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to generate suggestions' });
   }
 });
 
