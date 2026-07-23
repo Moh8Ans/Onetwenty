@@ -9,6 +9,7 @@ import { computeRawPoints, applyCapsAndLedger } from '../services/scoringEngine.
 import { SHARED_CAP_CEILINGS } from '../config/sharedCapCeilings.js';
 import { validateSpecialConditions } from '../services/validateSpecialConditions.js';
 import { generateSuggestions } from '../services/suggestionEngine.js';
+import { checkForDuplicate } from '../services/duplicateDetection.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -16,32 +17,6 @@ router.use(requireAuth);
 function getUserId(req: any): string {
   return req.userId;
 }
-
-// CREATE — add a new activity (legacy manual-entry path, kept for now)
-router.post('/', async (req, res) => {
-  try {
-    const userId = getUserId(req);
-    const { categoryId, title, pointsClaimed, eventDate, status } = req.body;
-
-    if (!categoryId || !title || pointsClaimed == null) {
-      return res.status(400).json({ error: 'categoryId, title, and pointsClaimed are required' });
-    }
-
-    const [newActivity] = await db.insert(activities).values({
-      userId,
-      categoryId,
-      title,
-      pointsClaimed,
-      eventDate: eventDate ? new Date(eventDate) : null,
-      status: status || 'draft',
-    }).returning();
-
-    res.status(201).json(newActivity);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to create activity' });
-  }
-});
 
 // LIST — all activities for the current user
 router.get('/', async (req, res) => {
@@ -183,14 +158,23 @@ router.post('/confirm', async (req, res) => {
       return res.status(422).json({ error: 'Eligibility check failed', reason: validation.reason });
     }
 
+    // duplicate check — must also happen before scoring, for the same reason:
+    // a likely-duplicate submission shouldn't be written or scored at all
+    const userActivities = await db.select().from(activities).where(eq(activities.userId, userId));
+    const duplicateCheck = checkForDuplicate(
+      { categoryId, title, eventDate: eventDate ?? null },
+      userActivities
+    );
+    if (duplicateCheck.isDuplicate) {
+      return res.status(409).json({ error: 'Possible duplicate submission', reason: duplicateCheck.reason, matchedActivityId: duplicateCheck.matchedActivityId });
+    }
+
     // per_unit_capped needs to know how much of THIS category's own cap is already used
     // (separate from shared_cap_ledger, which tracks cross-category group ceilings)
     let priorInstancesTotal = 0;
     if (category.scoringType === 'per_unit_capped') {
-      const priorRows = await db.select().from(activities)
-        .where(and(eq(activities.userId, userId), eq(activities.categoryId, categoryId)));
-      priorInstancesTotal = priorRows
-        .filter(a => a.status !== 'sfa_rejected')
+      priorInstancesTotal = userActivities
+        .filter(a => a.categoryId === categoryId && a.status !== 'sfa_rejected')
         .reduce((sum, a) => sum + (a.computedPoints ?? 0), 0);
     }
 

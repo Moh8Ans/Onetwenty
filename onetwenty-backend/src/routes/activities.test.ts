@@ -117,34 +117,34 @@ describe('POST /confirm', () => {
   });
 
   describe('per_unit_capped — regression coverage for the priorInstancesTotal bug', () => {
-    const category = { id: 5, scoringType: 'per_unit_capped', maxPoints: 10, sharedCapGroup: null, scoringTable: { perInstance: 5 } };
+  const category = { id: 5, scoringType: 'per_unit_capped', maxPoints: 10, sharedCapGroup: null, scoringTable: { perInstance: 5 } };
 
-    it('awards full perInstance when no prior activity exists for this category', async () => {
-      selectResults.set(categories, [category]);
-      selectResults.set(activities, []); // no prior submissions
-      const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #1' });
-      expect(res.body.computedPoints).toBe(5);
-    });
-
-    it('awards zero once two prior instances have already used the full cap — this is exactly the bug that shipped uncaught', async () => {
-      selectResults.set(categories, [category]);
-      selectResults.set(activities, [
-        { status: 'pending_review', computedPoints: 5 },
-        { status: 'sfa_approved', computedPoints: 5 },
-      ]); // 10 already awarded, cap is 10
-      const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #3' });
-      expect(res.body.computedPoints).toBe(0);
-    });
-
-    it('excludes sfa_rejected prior activities from the running total', async () => {
-      selectResults.set(categories, [category]);
-      selectResults.set(activities, [
-        { status: 'sfa_rejected', computedPoints: 5 }, // should not count
-      ]);
-      const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #2' });
-      expect(res.body.computedPoints).toBe(5); // full amount, rejected one correctly ignored
-    });
+  it('awards full perInstance when no prior activity exists for this category', async () => {
+    selectResults.set(categories, [category]);
+    selectResults.set(activities, []); // no prior submissions
+    const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #1' });
+    expect(res.body.computedPoints).toBe(5);
   });
+
+  it('awards zero once two prior instances have already used the full cap — this is exactly the bug that shipped uncaught', async () => {
+    selectResults.set(categories, [category]);
+    selectResults.set(activities, [
+      { categoryId: 5, title: 'Blood Donation #1', status: 'pending_review', computedPoints: 5 },
+      { categoryId: 5, title: 'Blood Donation #2', status: 'sfa_approved', computedPoints: 5 },
+    ]); // 10 already awarded, cap is 10
+    const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #3' });
+    expect(res.body.computedPoints).toBe(0);
+  });
+
+  it('excludes sfa_rejected prior activities from the running total', async () => {
+    selectResults.set(categories, [category]);
+    selectResults.set(activities, [
+      { categoryId: 5, title: 'Blood Donation #1', status: 'sfa_rejected', computedPoints: 5 }, // should not count
+    ]);
+    const res = await request(app).post('/confirm').send({ categoryId: 5, title: 'Blood Donation #2' });
+    expect(res.body.computedPoints).toBe(5); // full amount, rejected one correctly ignored
+  });
+});
 
   describe('shared cap group interaction', () => {
     const groupKey = 'g1_nss_ncc_1.11_1.19';
