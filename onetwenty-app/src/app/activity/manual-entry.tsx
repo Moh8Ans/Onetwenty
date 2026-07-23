@@ -60,6 +60,11 @@ export default function ManualEntryScreen() {
       }),
     });
     setSubmitting(false);
+    if (res.status === 409) {
+      const body = await res.json();
+      alert(`Possible duplicate: ${body.reason}`);
+    return;
+    }
     if (res.ok) router.replace('/(tabs)/activities');
   }
 

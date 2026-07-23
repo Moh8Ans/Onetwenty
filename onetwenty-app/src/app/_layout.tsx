@@ -1,10 +1,11 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useColorScheme } from 'react-native';
+import { ThemeProvider as NavigationThemeProvider, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { ClerkProvider, ClerkLoaded, useAuth } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
 import { Stack } from 'expo-router';
+import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { ThemeProvider as AppThemeProvider, useTheme } from '@/theme/ThemeContext';
 
 const tokenCache = {
   async getToken(key: string) {
@@ -14,6 +15,7 @@ const tokenCache = {
     return SecureStore.setItemAsync(key, value);
   },
 };
+
 function RootNavigator() {
   const { isLoaded, isSignedIn } = useAuth();
 
@@ -32,18 +34,34 @@ function RootNavigator() {
   );
 }
 
+function ThemedNavigator() {
+  const { theme, loaded } = useTheme();
+
+  if (!loaded) return null;
+
+  return (
+    <NavigationThemeProvider value={theme.mode === 'dark' ? DarkTheme : DefaultTheme}>
+      <AnimatedSplashOverlay />
+      <RootNavigator />
+    </NavigationThemeProvider>
+  );
+}
+
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+  });
+
+  if (!fontsLoaded) return null;
 
   return (
     <ClerkProvider
       tokenCache={tokenCache}
       publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}>
       <ClerkLoaded>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <AnimatedSplashOverlay />
-          <RootNavigator />
-        </ThemeProvider>
+        <AppThemeProvider>
+          <ThemedNavigator />
+        </AppThemeProvider>
       </ClerkLoaded>
     </ClerkProvider>
   );
