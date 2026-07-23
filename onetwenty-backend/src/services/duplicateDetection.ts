@@ -3,7 +3,7 @@ export type ActivityForDuplicateCheck = {
   id: number;
   categoryId: number;
   title: string;
-  eventDate: string | null;
+  eventDate: string | Date | null;
   status: string;
 };
 
@@ -37,7 +37,7 @@ function titleSimilarity(a: string, b: string): number {
   return intersection / union;
 }
 
-function daysBetween(a: string, b: string): number {
+function daysBetween(a: string | Date, b: string | Date): number {
   return Math.abs(new Date(a).getTime() - new Date(b).getTime()) / (1000 * 60 * 60 * 24);
 }
 
